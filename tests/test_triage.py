@@ -235,6 +235,15 @@ class CliTest(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertIn(engine.CATEGORY_OTHER, out)
 
+    def test_default_input_works_from_any_directory(self):
+        """messages.txt лежит рядом со скриптом, а не в текущем каталоге."""
+        previous = os.getcwd()
+        self.addCleanup(os.chdir, previous)
+        os.chdir(tempfile.gettempdir())
+        code, out, _ = self.run_cli(["--no-llm"])
+        self.assertEqual(0, code)
+        self.assertIn("Обращений: 5", out)
+
     def test_blank_lines_and_comments_are_skipped(self):
         messages, warnings = cli.prepare(["# комментарий\n", "\n", "  \n", "Где буфет?\n"])
         self.assertEqual(["Где буфет?"], messages)
