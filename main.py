@@ -10,17 +10,63 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import textwrap
 
 from triage import MAX_MESSAGE_LEN, LLMConfig, Result, triage
 
 DEFAULT_INPUT = "messages.txt"
+ENV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 WIDTH = 88
 
 
 class InputError(Exception):
     """Проблема со входными данными: файла нет или он нечитаем."""
+
+
+def load_env_file(path: str = ENV_FILE) -> list[str]:
+    """Подхватить переменные из .env рядом со скриптом.
+
+    Ключ живёт в проекте, а не в окружении всей системы: его видят только запуски
+    этого скрипта. Настоящее окружение главнее файла — уже заданные переменные
+    не перетираются, так что `LLM_MODEL=... python3 main.py` продолжает работать.
+
+    Возвращает имена загруженных переменных. Значения не возвращаются и не печатаются.
+    """
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            lines = handle.readlines()
+    except OSError:
+        return []
+
+    try:
+        if os.stat(path).st_mode & 0o077:
+            print(
+                f"Предупреждение: файл {path} читается не только владельцем. "
+                f"Выполните: chmod 600 {path}",
+                file=sys.stderr,
+            )
+    except OSError:
+        pass
+
+    loaded: list[str] = []
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+        name, separator, value = line.partition("=")
+        name, value = name.strip(), value.strip()
+        if not separator or not name:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if name not in os.environ:
+            os.environ[name] = value
+            loaded.append(name)
+    return loaded
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -112,6 +158,7 @@ def format_result(index: int, result: Result, show_note: bool) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    load_env_file()
     config = None if args.no_llm else LLMConfig.from_env()
 
     try:

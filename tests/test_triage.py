@@ -5,7 +5,9 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
@@ -418,6 +420,64 @@ class ReplyGuardrailTest(unittest.TestCase):
             result = engine.triage("Пропал Wi-Fi в корпусе B.", config)
         self.assertEqual("rules", result.source)
         self.assertIn("номер телефона", result.note)
+
+
+class EnvFileTest(unittest.TestCase):
+    """Ключ берётся из .env проекта, а не из окружения всей системы."""
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+        self.path = os.path.join(self.directory, ".env")
+        self.addCleanup(shutil.rmtree, self.directory, True)
+
+    def write(self, content: str, mode: int = 0o600) -> str:
+        with open(self.path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        os.chmod(self.path, mode)
+        return self.path
+
+    def forget(self, *names: str):
+        for name in names:
+            os.environ.pop(name, None)
+            self.addCleanup(os.environ.pop, name, None)
+
+    def test_missing_file_is_not_an_error(self):
+        self.assertEqual([], cli.load_env_file(os.path.join(self.directory, "нет.env")))
+
+    def test_plain_assignment(self):
+        self.forget("TRIAGE_TEST_KEY")
+        self.assertEqual(["TRIAGE_TEST_KEY"], cli.load_env_file(self.write("TRIAGE_TEST_KEY=abc\n")))
+        self.assertEqual("abc", os.environ["TRIAGE_TEST_KEY"])
+
+    def test_export_prefix_and_quotes(self):
+        self.forget("TRIAGE_TEST_A", "TRIAGE_TEST_B")
+        cli.load_env_file(self.write('export TRIAGE_TEST_A=one\nTRIAGE_TEST_B="two/three"\n'))
+        self.assertEqual("one", os.environ["TRIAGE_TEST_A"])
+        self.assertEqual("two/three", os.environ["TRIAGE_TEST_B"])
+
+    def test_comments_and_blank_lines_are_skipped(self):
+        self.forget("TRIAGE_TEST_KEY")
+        loaded = cli.load_env_file(self.write("# коммент\n\n   \nмусор без равенства\nTRIAGE_TEST_KEY=v\n"))
+        self.assertEqual(["TRIAGE_TEST_KEY"], loaded)
+
+    def test_real_environment_wins_over_file(self):
+        self.forget("TRIAGE_TEST_KEY")
+        os.environ["TRIAGE_TEST_KEY"] = "из окружения"
+        self.assertEqual([], cli.load_env_file(self.write("TRIAGE_TEST_KEY=из файла\n")))
+        self.assertEqual("из окружения", os.environ["TRIAGE_TEST_KEY"])
+
+    def test_loose_permissions_are_reported(self):
+        self.forget("TRIAGE_TEST_KEY")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            cli.load_env_file(self.write("TRIAGE_TEST_KEY=v\n", mode=0o644))
+        self.assertIn("chmod 600", err.getvalue())
+
+    def test_secret_value_is_never_returned(self):
+        self.forget("TRIAGE_TEST_KEY")
+        loaded = cli.load_env_file(self.write("TRIAGE_TEST_KEY=sk-or-v1-секрет\n"))
+        self.assertEqual(["TRIAGE_TEST_KEY"], loaded)
+        self.assertNotIn("секрет", "".join(loaded))
 
 
 if __name__ == "__main__":

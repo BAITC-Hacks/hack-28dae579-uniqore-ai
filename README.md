@@ -16,7 +16,8 @@
 - Обработка крайних случаев: файла нет, файл пустой, строка сверхдлинная,
   текст мусорный, LLM не отвечает.
 - Контроль качества ответа LLM: категория, язык и отсутствие выдуманных контактов.
-- 53 теста на стандартном `unittest`, без обращений в сеть.
+- Ключ читается из `.env` внутри проекта — в окружение системы он не попадает.
+- 60 тестов на стандартном `unittest`, без обращений в сеть.
 
 ## Как устроено
 
@@ -100,26 +101,29 @@ python3 main.py
 
 Ключ не нужен: без него скрипт работает на правилах и не ходит в сеть.
 
-Включить LLM:
+Включить LLM. Ключ кладётся в файл `.env` **внутри проекта**: `main.py` читает его
+при запуске, поэтому ключ виден только этому скрипту, а не всем процессам в системе.
+`.gitignore` этот файл закрывает.
 
 ```bash
-export LLM_API_KEY=sk-or-v1-...        # ключ OpenRouter: https://openrouter.ai/keys
-python3 main.py
+cp .env.example .env && chmod 600 .env
 ```
 
-Этого достаточно: база и модель по умолчанию уже указывают на OpenRouter
-(`https://openrouter.ai/api/v1`, `openai/gpt-4o-mini`). Другая модель или другой
-провайдер — две переменные:
+Впишите в `.env` ключ OpenRouter ([openrouter.ai/keys](https://openrouter.ai/keys))
+в строку `LLM_API_KEY=` и запустите `python3 main.py`. Больше ничего настраивать не
+нужно: база и модель по умолчанию уже указывают на OpenRouter
+(`https://openrouter.ai/api/v1`, `openai/gpt-4o-mini`).
+
+Переменные окружения тоже работают и имеют приоритет над файлом — удобно для разового
+прогона с другой моделью или другим провайдером:
 
 ```bash
-export LLM_MODEL=anthropic/claude-3.5-haiku          # каталог: https://openrouter.ai/models
-export LLM_BASE_URL=https://api.openai.com/v1        # NVIDIA NIM: https://integrate.api.nvidia.com/v1
+LLM_MODEL=anthropic/claude-3.5-haiku python3 main.py
 ```
 
-Принимаются также `OPENROUTER_API_KEY` и `OPENAI_API_KEY`.
-
-Все ключи `main.py` берёт только из окружения, в репозиторий они не попадают и в вывод
-не печатаются.
+Имя ключа принимается любое из трёх: `LLM_API_KEY`, `OPENROUTER_API_KEY`,
+`OPENAI_API_KEY`. В вывод ключ не печатается ни при каких условиях. Если у `.env`
+окажутся слишком широкие права, скрипт об этом предупредит.
 
 Аргументы:
 
@@ -137,14 +141,14 @@ export LLM_BASE_URL=https://api.openai.com/v1        # NVIDIA NIM: https://integ
 | # | Команда | Ожидаемый результат |
 |---|---|---|
 | 1 | `python3 main.py` | 5 блоков: текст, категория, уверенность, черновик на русском. Категории по порядку: справка, жалоба, другое, жалоба, справка. Код возврата 0 |
-| 2 | `python3 -m unittest discover -s tests -v` | `OK`, 53 теста, сеть не используется |
+| 2 | `python3 -m unittest discover -s tests -v` | `OK`, 60 тестов, сеть не используется |
 | 3 | `python3 main.py --json \| python3 -m json.tool --no-ensure-ascii` | валидный JSON, 5 объектов, у каждого непустой `reply` |
 | 4 | `python3 main.py --input /dev/null` | «Обращений не найдено», код возврата 0 |
 | 5 | `python3 main.py --input nope.txt` | «Ошибка: файл «nope.txt» не найден», код возврата 2, без трейсбека |
 | 6 | `python3 main.py --text "Ыыыы 😀😀"` | категория `другое`, уверенность 0.00, черновик с просьбой уточнить |
 | 7 | `LLM_API_KEY=dummy LLM_BASE_URL=http://127.0.0.1:9 LLM_TIMEOUT=2 python3 main.py` | в шапке «LLM недоступен: сеть недоступна…, использованы правила», дальше те же 5 результатов, код 0, ключ в выводе не появляется |
 | 8 | `git clone` во временную папку, затем `python3 main.py` | работает сразу, без `pip install` и без `.env` |
-| 9 | `LLM_API_KEY=sk-or-v1-... python3 main.py` | категории и черновики от модели, в строке результата источник `LLM` |
+| 9 | ключ в `.env`, затем `python3 main.py` | категории и черновики от модели, в строке результата источник `LLM` |
 
 Проверить категории машинно:
 
@@ -183,8 +187,8 @@ python3 main.py --json | python3 -c "import json,sys; print([r['category'] for r
 main.py                        CLI и оркестрация
 triage.py                      классификация, шаблоны ответов, клиент LLM
 messages.txt                   5 обращений из условия кейса
-tests/test_triage.py           53 теста, без сети
+tests/test_triage.py           60 тестов, без сети
 AGENTS.md                      процесс разработки и Definition of Done
 docs/spec-triage-classifier.md спецификация решения
-.env.example                   переменные окружения для LLM-пути
+.env.example                   образец .env: ключ и настройки LLM
 ```
