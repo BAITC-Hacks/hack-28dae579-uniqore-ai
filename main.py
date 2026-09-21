@@ -160,6 +160,24 @@ def format_result(index: int, result: Result, show_note: bool) -> str:
     return "\n".join(lines)
 
 
+def use_utf8_streams() -> None:
+    """Печатать вывод в UTF-8 независимо от локали системы.
+
+    С консолью Python и так говорит в Unicode, но при перенаправлении
+    (`python3 main.py > out.txt`, конвейер) берёт кодировку локали — на русской
+    Windows это cp1251. Файл с результатами получался не в UTF-8, а `--json`
+    ломал разбор у всего, что ждёт UTF-8. На Linux и macOS локаль обычно уже
+    UTF-8, и вызов ничего не меняет.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, OSError, ValueError):
+            # Поток подменён (тесты, отладчик) или перенастройку не поддерживает.
+            # Вывод останется в кодировке локали, но ронять из-за этого прогон незачем.
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     load_env_file()
@@ -205,6 +223,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # До первой печати: сообщения об ошибках ниже тоже должны уйти в UTF-8.
+    use_utf8_streams()
     try:
         sys.exit(main())
     except KeyboardInterrupt:
