@@ -364,5 +364,61 @@ class OpenRouterTest(unittest.TestCase):
         self.assertEqual("https://openrouter.ai/api/v1/chat/completions", seen["url"])
 
 
+class ReplyGuardrailTest(unittest.TestCase):
+    """Черновик LLM не должен содержать выдуманных контактов."""
+
+    CLEAN = "Здравствуйте! Передали обращение в профильную службу, ответим завтра."
+
+    def test_clean_reply_passes(self):
+        self.assertIsNone(engine.check_reply(self.CLEAN))
+
+    def test_phone_is_rejected(self):
+        for reply in ["Звоните +7 701 123 45 67", "Телефон 8 (701) 123-45-67"]:
+            with self.subTest(reply=reply):
+                self.assertIn("телефон", engine.check_reply(reply))
+
+    def test_link_is_rejected(self):
+        for reply in ["Подробности на https://example.kz", "Смотрите www.example.kz"]:
+            with self.subTest(reply=reply):
+                self.assertIn("ссылка", engine.check_reply(reply))
+
+    def test_email_is_rejected(self):
+        self.assertIn("почты", engine.check_reply("Пишите на help@example.kz"))
+
+    def test_digit_run_is_rejected(self):
+        self.assertIn("цифр", engine.check_reply("Ваш номер обращения 1234567890"))
+
+    def test_short_numbers_are_allowed(self):
+        self.assertIsNone(engine.check_reply("Ответим в течение 2 рабочих дней, кабинет 12."))
+
+    def test_prompt_forbids_invented_facts(self):
+        self.assertIn("ничего не знаешь", engine.SYSTEM_PROMPT)
+        self.assertIn("расположение", engine.SYSTEM_PROMPT)
+
+    def test_call_llm_rejects_reply_with_contacts(self):
+        config = engine.LLMConfig(api_key="k", timeout=1)
+        dirty = json.dumps({"category": "справка", "reply": "Звоните +7 701 123 45 67, поможем."})
+        envelope = json.dumps({"choices": [{"message": {"content": dirty}}]})
+        calls = []
+
+        def fake_urlopen(request, timeout=None):
+            calls.append(1)
+            return FakeResponse(envelope)
+
+        with patch("urllib.request.urlopen", fake_urlopen):
+            payload, error = engine.call_llm("Как позвонить в деканат?", config)
+
+        self.assertIsNone(payload)
+        self.assertIn("телефон", error)
+        self.assertEqual(1, len(calls))  # температура 0 — повтор бессмыслен
+
+    def test_triage_falls_back_when_reply_rejected(self):
+        config = engine.LLMConfig(api_key="k")
+        with patch.object(engine, "call_llm", return_value=(None, "в черновике номер телефона")):
+            result = engine.triage("Пропал Wi-Fi в корпусе B.", config)
+        self.assertEqual("rules", result.source)
+        self.assertIn("номер телефона", result.note)
+
+
 if __name__ == "__main__":
     unittest.main()
