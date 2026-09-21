@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -253,6 +254,73 @@ class CliTest(unittest.TestCase):
         messages, warnings = cli.prepare(["я" * (engine.MAX_MESSAGE_LEN + 50)])
         self.assertEqual(engine.MAX_MESSAGE_LEN, len(messages[0]))
         self.assertEqual(1, len(warnings))
+
+
+class RecordingStream:
+    """Поток, который запоминает, с какой кодировкой его перенастроили."""
+
+    def __init__(self):
+        self.encoding = None
+
+    def reconfigure(self, *, encoding=None, **kwargs):
+        self.encoding = encoding
+
+
+class StubbornStream:
+    """Поток, который перенастроить нельзя: так ведёт себя часть обёрток вывода."""
+
+    def reconfigure(self, **kwargs):
+        raise OSError("поток не поддерживает перенастройку")
+
+
+class OutputEncodingTest(unittest.TestCase):
+    """Вывод остаётся в UTF-8 даже там, где локаль системы другая."""
+
+    def test_streams_are_switched_to_utf8(self):
+        out, err = RecordingStream(), RecordingStream()
+        with patch.object(sys, "stdout", out), patch.object(sys, "stderr", err):
+            cli.use_utf8_streams()
+        self.assertEqual("utf-8", out.encoding)
+        self.assertEqual("utf-8", err.encoding)
+
+    def test_stream_without_reconfigure_is_not_an_error(self):
+        """Под тестами и отладчиком stdout подменён объектом без reconfigure."""
+        with patch.object(sys, "stdout", io.StringIO()), patch.object(sys, "stderr", io.StringIO()):
+            cli.use_utf8_streams()
+
+    def test_failing_reconfigure_is_survived(self):
+        with patch.object(sys, "stdout", StubbornStream()), patch.object(
+            sys, "stderr", StubbornStream()
+        ):
+            cli.use_utf8_streams()
+
+    def test_redirected_output_is_utf8(self):
+        """Настоящий запуск с перенаправлением: файл читается как UTF-8.
+
+        Ради этого и сделан фикс: на русской Windows перенаправленный вывод
+        уходил в cp1251, и файл с результатами получался не в UTF-8.
+        """
+        environment = dict(os.environ)
+        # Иначе тест проверял бы переменную окружения, а не код.
+        environment.pop("PYTHONIOENCODING", None)
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "out.txt")
+            with open(path, "wb") as handle:
+                code = subprocess.call(
+                    [sys.executable, cli.__file__, "--no-llm"],
+                    stdout=handle,
+                    stderr=subprocess.DEVNULL,
+                    env=environment,
+                )
+            with open(path, "rb") as handle:
+                raw = handle.read()
+
+        self.assertEqual(0, code)
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as error:
+            self.fail(f"перенаправленный вывод не в UTF-8: {error}")
+        self.assertIn("Обращений: 5", text)
 
 
 class FakeResponse:
