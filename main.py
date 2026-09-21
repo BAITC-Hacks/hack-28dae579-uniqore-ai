@@ -16,8 +16,12 @@ import textwrap
 
 from triage import MAX_MESSAGE_LEN, LLMConfig, Result, triage
 
-DEFAULT_INPUT = "messages.txt"
-ENV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+# Файлы по умолчанию ищем рядом со скриптом, а не в текущем каталоге:
+# `python3 /путь/к/main.py` должен работать из любого места. Путь, переданный
+# через --input, остаётся относительным текущему каталогу — так ожидает пользователь.
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_INPUT = os.path.join(PROJECT_DIR, "messages.txt")
+ENV_FILE = os.path.join(PROJECT_DIR, ".env")
 WIDTH = 88
 
 
@@ -78,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--input",
         default=DEFAULT_INPUT,
         metavar="ФАЙЛ",
-        help=f"файл с обращениями, по одному на строку (по умолчанию {DEFAULT_INPUT})",
+        help="файл с обращениями, по одному на строку (по умолчанию messages.txt рядом со скриптом)",
     )
     parser.add_argument(
         "--text",
